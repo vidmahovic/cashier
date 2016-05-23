@@ -9,6 +9,12 @@
             "email": "taylorotwell@gmail.com"
         }
     ],
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/vidmahovic/cashier"
+        }
+    ],
     "require": {
         "php": ">=5.5.9",
         "illuminate/database": "~5.1",

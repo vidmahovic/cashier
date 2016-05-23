@@ -4,6 +4,7 @@ namespace Laravel\Cashier;
 
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 
 class Subscription extends Model
 {
@@ -25,6 +26,25 @@ class Subscription extends Model
     ];
 
     /**
+<<<<<<< Updated upstream
+=======
+     * Indicates if the plan change should be prorated.
+     *
+     * @var bool
+     */
+    protected $prorate = true;
+
+    /**
+     * The date on which the billing cycle should be anchored.
+     *
+     * @var string|null
+     */
+    protected $billingCycleAnchor = null;
+
+    protected $coupon = null;
+
+    /**
+>>>>>>> Stashed changes
      * Get the user that owns the subscription.
      */
     public function user()
@@ -144,6 +164,44 @@ class Subscription extends Model
     }
 
     /**
+<<<<<<< Updated upstream
+=======
+     * Indicate that the plan change should not be prorated.
+     *
+     * @return $this
+     */
+    public function noProrate()
+    {
+        $this->prorate = false;
+
+        return $this;
+    }
+
+    public function withCoupon($coupon)
+    {
+        $this->coupon = $coupon;
+        return $this;
+    }
+
+    /**
+     * Change the billing cycle anchor on a plan change.
+     *
+     * @param  int|string  $date
+     * @return $this
+     */
+    public function anchorBillingCycleOn($date = 'now')
+    {
+        if ($date instanceof DateTimeInterface) {
+            $date = $date->getTimestamp();
+        }
+
+        $this->billingCycleAnchor = $date;
+
+        return $this;
+    }
+
+    /**
+>>>>>>> Stashed changes
      * Swap the subscription to a new Stripe plan.
      *
      * @param  string  $plan
@@ -155,6 +213,17 @@ class Subscription extends Model
 
         $subscription->plan = $plan;
 
+<<<<<<< Updated upstream
+=======
+        $subscription->prorate = $this->prorate;
+
+        if(!is_null($this->coupon)) $subscription->coupon = $this->coupon;
+
+        if (! is_null($this->billingCycleAnchor)) {
+            $subscription->billingCycleAnchor = $this->billingCycleAnchor;
+        }
+
+>>>>>>> Stashed changes
         // If no specific trial end date has been set, the default behavior should be
         // to maintain the current trial state, whether that is "active" or to run
         // the swap out with the exact number of days left on this current plan.
@@ -251,6 +320,8 @@ class Subscription extends Model
         // where we left off. Then, we'll set the proper trial ending timestamp.
         $subscription->plan = $this->stripe_plan;
 
+        $subscription->prorate = $this->prorate;
+
         if ($this->onTrial()) {
             $subscription->trial_end = $this->trial_ends_at->getTimestamp();
         } else {
@@ -276,4 +347,28 @@ class Subscription extends Model
     {
         return $this->user->asStripeCustomer()->subscriptions->retrieve($this->stripe_id);
     }
+
+    public function getPaidAtAttribute()
+    {
+        return Carbon::createFromFormat('Y-m-d H:i:s', Cache::get('sub-payment-'.$this->id, function() {
+
+            $remote_subscription = $this->asStripeSubscription();
+
+            if($remote_subscription->plan->interval === 'year')
+                $current_period_start = $this->user->resolveActiveBillingCycleStart();
+            else
+                $current_period_start = Carbon::createFromTimestamp((int) $remote_subscription->current_period_start);
+
+            Cache::put('sub-payment-'.$this->id, $current_period_start, Carbon::now()->addMonth());
+
+            return $current_period_start;
+        }));
+    }
+
+    public function getActiveStripePlanAttribute()
+    {
+        if(is_null($this->old_stripe_plan)) return $this->stripe_plan;
+        return $this->old_stripe_plan;
+    }
+
 }

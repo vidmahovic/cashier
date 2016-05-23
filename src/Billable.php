@@ -347,6 +347,28 @@ trait Billable
         return StripeCustomer::retrieve($this->stripe_id, $this->getStripeKey());
     }
 
+    public function resolveActiveBillingCycleStart()
+    {
+        $dt = Carbon::now()->endOfDay();
+
+        if($dt->copy()->day($this->billing_day)->isFuture()) {
+            $dt->day = $this->calculateBillingDayForDate($dt->subMonth());
+        } else {
+            $dt->day = $this->calculateBillingDayForDate($dt);
+        }
+
+        return $dt;
+    }
+
+    private function calculateBillingDayForDate(Carbon $dt)
+    {
+        if(checkdate($dt->month, $this->billing_day, $dt->year)) {
+            return $this->billing_day;
+        }
+
+        return $dt->daysInMonth;
+    }
+
     /**
      * Get the Stripe supported currency used by the entity.
      *

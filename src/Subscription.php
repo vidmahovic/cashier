@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use LogicException;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Cache;
 
 class Subscription extends Model
 {
@@ -39,6 +40,8 @@ class Subscription extends Model
      * @var string|null
      */
     protected $billingCycleAnchor = null;
+
+    protected $coupon = null;
 
     /**
      * Get the user that owns the subscription.
@@ -200,6 +203,12 @@ class Subscription extends Model
         return $this;
     }
 
+    public function withCoupon($coupon)
+    {
+        $this->coupon = $coupon;
+        return $this;
+    }
+
     /**
      * Swap the subscription to a new Stripe plan.
      *
@@ -213,6 +222,8 @@ class Subscription extends Model
         $subscription->plan = $plan;
 
         $subscription->prorate = $this->prorate;
+
+        if(!is_null($this->coupon)) $subscription->coupon = $this->coupon;
 
         if (! is_null($this->billingCycleAnchor)) {
             $subscription->billingCycleAnchor = $this->billingCycleAnchor;
@@ -309,7 +320,7 @@ class Subscription extends Model
     public function resume()
     {
         if (! $this->onGracePeriod()) {
-            throw new LogicException('Unable to resume subscription that is not within grace period.');
+            throw new \LogicException("Unable to resume subscription that is not within grace period.");
         }
 
         $subscription = $this->asStripeSubscription();
@@ -318,6 +329,8 @@ class Subscription extends Model
         // subscription object. This will force Stripe to resume this subscription
         // where we left off. Then, we'll set the proper trial ending timestamp.
         $subscription->plan = $this->stripe_plan;
+
+        $subscription->prorate = $this->prorate;
 
         if ($this->onTrial()) {
             $subscription->trial_end = $this->trial_ends_at->getTimestamp();
@@ -344,4 +357,28 @@ class Subscription extends Model
     {
         return $this->user->asStripeCustomer()->subscriptions->retrieve($this->stripe_id);
     }
+
+    public function getPaidAtAttribute()
+    {
+        return Carbon::createFromFormat('Y-m-d H:i:s', Cache::get('sub-payment-'.$this->id, function() {
+
+            $remote_subscription = $this->asStripeSubscription();
+
+            if($remote_subscription->plan->interval === 'year')
+                $current_period_start = $this->user->resolveActiveBillingCycleStart();
+            else
+                $current_period_start = Carbon::createFromTimestamp((int) $remote_subscription->current_period_start);
+
+            Cache::put('sub-payment-'.$this->id, $current_period_start, Carbon::now()->addMonth());
+
+            return $current_period_start;
+        }));
+    }
+
+    public function getActiveStripePlanAttribute()
+    {
+        if(is_null($this->old_stripe_plan)) return $this->stripe_plan;
+        return $this->old_stripe_plan;
+    }
+
 }

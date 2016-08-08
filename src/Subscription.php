@@ -7,6 +7,7 @@ use LogicException;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Stripe\Plan;
 
 class Subscription extends Model
 {
@@ -42,6 +43,8 @@ class Subscription extends Model
     protected $billingCycleAnchor = null;
 
     protected $coupon = null;
+
+    public $model_namespace = 'App';
 
     /**
      * Get the user that owns the subscription.
@@ -379,6 +382,112 @@ class Subscription extends Model
     {
         if(is_null($this->old_stripe_plan)) return $this->stripe_plan;
         return $this->old_stripe_plan;
+    }
+
+    /**
+     * Return the datetime of the next billing cycle. Billing cycle starts when customer pays for his new billing cycle
+     * (i.e. pays for the next subscription period). Billing cycle can last longer than refresh cycle if
+     * Stripe subscription's billing cycle is more than 1 month long. It can also last shorter
+     * if a user is on trial period which lasts less than 1 month.
+     *
+     * @return Carbon
+     */
+    public function getNextBillingCycleAttribute()
+    {
+        if($this->valid()) {
+
+            if(! Cache::has('sub-next-billing-'.$this->id)) {
+                $current_period_end = Carbon::createFromTimestamp($this->asStripeSubscription()->current_period_end);
+                Cache::forever('sub-next-billing-'.$this->id, $current_period_end->addSecond());
+            }
+
+            return Cache::get('sub-next-billing-'.$this->id);
+
+        }
+
+        return null;
+    }
+
+    /**
+     * Return the datetime of a next refresh cycle. Refresh cycle is when customer's units get refreshed (emails_spent
+     * is set to 0). If customer's subscription is monthly subscription, then next_refresh_cycle is the same
+     * as next_billing_cycle.
+     *
+     * @return Carbon
+     */
+    public function getNextRefreshCycleAttribute()
+    {
+        if($this->valid()) {
+            $next_refresh_cycle = $this->paid_at->addMonth();
+            return $next_refresh_cycle->lt($this->next_billing_cycle) ? $next_refresh_cycle : $this->next_billing_cycle;
+        }
+
+        return null;
+    }
+
+    // todo: this is email remaining total! not only for current subscription!
+    public function getEmailsRemainingAttribute()
+    {
+        $remaining = $this->emails_available - $this->emails_spent;
+        return $remaining > 0 ? $remaining : 0;
+    }
+
+    public function getCurrentEmailsRemainingAttribute()
+    {
+        $remaining = $this->emails_available - $this->user->additional_units_bought - $this->emails_spent;
+        return $remaining > 0 ? $remaining : 0;
+    }
+
+    /**
+     * Get emails spent between the beginning and the end of a subscription. Note that new subscription is created
+     * only if active one is cancelled (changing plans, cancelling and then resuming, etc. does
+     * not cause creation of a new subscription).
+     *
+     * @return int
+     */
+    public function getTotalEmailsSpentAttribute()
+    {
+        $stats_model = $this->model_namespace.'\Stats';
+        $stats = $stats_model::select(
+            \DB::raw('sum(emails_sent) as emails_sent')
+        )
+            ->userCredential($this->user)
+            ->between($this->created_at, $this->ends_at)
+            ->value('emails_sent');
+        try {
+            return intval($stats);
+        } catch(\Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Get emails spent in current billing cycle which starts when Stripe customer paid his last invoice.
+     *
+     * @return int
+     */
+    public function getEmailsSpentAttribute()
+    {
+        $stats_model = $this->model_namespace.'\Stats';
+        try {
+            return intval(
+                $stats_model::select(
+                    \DB::raw('sum(emails_sent) as emails_sent')
+                )
+                    ->userCredential($this->user)
+                    ->between($this->paid_at, Carbon::now())
+                    ->value('emails_sent')
+            );
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    public function getEmailsAvailableAttribute()
+    {
+        $plan_model = $this->model_namespace.'\Plan';
+        $active_plan = $plan_model::findByStripePlan($this->active_stripe_plan);
+        return $active_plan->number_of_emails + $this->user->additional_units_bought;
     }
 
 }

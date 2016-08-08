@@ -7,6 +7,7 @@ use LogicException;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Stripe\Plan;
 
 class Subscription extends Model
@@ -449,7 +450,7 @@ class Subscription extends Model
     {
         $stats_model = $this->model_namespace.'\Stats';
         $stats = $stats_model::select(
-            \DB::raw('sum(emails_sent) as emails_sent')
+            DB::raw('sum(emails_sent) as emails_sent')
         )
             ->userCredential($this->user)
             ->between($this->created_at, $this->ends_at)
@@ -472,7 +473,7 @@ class Subscription extends Model
         try {
             return intval(
                 $stats_model::select(
-                    \DB::raw('sum(emails_sent) as emails_sent')
+                    DB::raw('sum(emails_sent) as emails_sent')
                 )
                     ->userCredential($this->user)
                     ->between($this->paid_at, Carbon::now())
